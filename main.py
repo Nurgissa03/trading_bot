@@ -50,6 +50,7 @@ COOLDOWN_CANDLES = 1
 auto_signal_running = False
 auto_task = None
 model_cache = {}
+news_cache = {}
 
 # =========================
 # LOGGING
@@ -664,6 +665,10 @@ def predict_last(model, df):
 # NEWS
 # =========================
 def get_news(symbol):
+    """
+    Получает новости для символа, используя кэш, чтобы избежать
+    превышения лимитов API.
+    """
     if not NEWS_API_KEY:
         return []
 
@@ -673,6 +678,13 @@ def get_news(symbol):
         "SOLUSDT": "solana OR SOL"
     }
     query = mapping.get(symbol, "crypto")
+
+    # Проверка кэша
+    cached_news = news_cache.get(symbol)
+    if cached_news and (time.time() - cached_news["timestamp"]) < 600: # 10 минут
+        return cached_news["articles"]
+
+    logger.info("Запрос свежих новостей для %s", symbol)
 
     url = "https://newsapi.org/v2/everything"
     params = {
@@ -686,7 +698,11 @@ def get_news(symbol):
     res = safe_request(url, params=params)
     if not res or res.get("status") != "ok":
         return []
-
+    
+    articles = res.get("articles", [])
+    # Сохраняем в кэш
+    news_cache[symbol] = {"articles": articles, "timestamp": time.time()}
+    
     return res.get("articles", [])
 
 
@@ -966,6 +982,10 @@ def build_signal(symbol):
     df = add_indicators(df)
     df = create_target(df)
     
+    if df.empty or len(df) < 50:
+        logger.warning("Недостаточно данных для build_signal по %s", symbol)
+        raise ValueError(f"Недостаточно данных для анализа {symbol}")
+
     patterns = detect_candle_patterns(df)
 
     model, accuracy = get_or_train_model(symbol, df)

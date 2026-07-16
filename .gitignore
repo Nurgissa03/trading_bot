@@ -1,0 +1,24 @@
+# Лог-файлы
+*.log
+
+# Файлы данных и истории
+*.json
+
+# Кэш и временные файлы Python
+__pycache__/
+*.pyc
+
+# Виртуальное окружение
+venv/
+env/
+.venv/
+
+# Файлы настроек IDE
+.vscode/
+.idea/
+
+# Временный файл VS Code
+tempCodeRunnerFile.py
+
+# Файлы операционной системы
+.DS_Store
