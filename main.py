@@ -125,13 +125,25 @@ def recent_same_symbol_signal_exists(symbol, entry_time, candles=COOLDOWN_CANDLE
 # =========================
 # HELPERS
 # =========================
-def safe_request(url, params=None):
-    try:
-        response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        logger.warning("HTTP ошибка: %s | url=%s", e, url)
+def safe_request(url, params=None, retries=3, delay=2):
+    """Делает HTTP-запрос с несколькими попытками в случае неудачи."""
+    for i in range(retries):
+        try:
+            response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()  # Вызовет исключение для кодов 4xx/5xx
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            logger.warning(
+                "HTTP ошибка (попытка %d/%d): %s | url=%s", i + 1, retries, e, url
+            )
+            if i < retries - 1:
+                time.sleep(delay)
+    
+    logger.error("Не удалось выполнить HTTP-запрос после %d попыток.", retries)
+    return None
+
+
+def interval_to_minutes(interval: str) -> int:
         return None
 
 
@@ -158,16 +170,19 @@ def round_price(symbol: str, price: float) -> float:
 # =========================
 # MARKET DATA
 # =========================
-def get_data(symbol="BTCUSDT", interval="5m"):
+def get_data(symbol="BTCUSDT", interval="5m", limit=LIMIT):
     url = "https://api.binance.com/api/v3/klines"
     params = {
         "symbol": symbol,
         "interval": interval,
-        "limit": LIMIT
+        "limit": limit
     }
 
     data = safe_request(url, params=params)
     if not data or not isinstance(data, list):
+        # Возвращаем пустой DataFrame вместо ошибки, чтобы избежать падения
+        logger.warning("Получены пустые данные для %s %s", symbol, interval)
+        return pd.DataFrame()
         raise ValueError(f"Не удалось получить market data для {symbol} {interval}")
 
     df = pd.DataFrame(data, columns=[
@@ -626,6 +641,10 @@ def get_or_train_model(symbol, df):
     global model_cache
 
     key = f"{symbol}_{PRIMARY_INTERVAL}"
+    if df.empty:
+        logger.warning("get_or_train_model: получен пустой DataFrame для %s", key)
+        raise ValueError(f"Недостаточно данных для анализа {symbol}")
+
     last_candle_time = int(df["time"].iloc[-1])
     current_ts = time.time()
 
@@ -822,6 +841,10 @@ def get_higher_timeframe_confirmation(symbol):
     df = get_data(symbol, TREND_INTERVAL)
     df = add_indicators(df)
     df.dropna(inplace=True)
+
+    if df.empty:
+        logger.warning("Не удалось получить данные для HTF-подтверждения по %s", symbol)
+        return "UNKNOWN", False, 0
 
     if len(df) < 50:
         return "UNKNOWN", False, 0
